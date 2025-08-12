@@ -19,9 +19,11 @@ function App() {
   useEffect(() => {
     // 引入 transformer
     // http://localhost:5173/worker.js
+    
     worker.current = new Worker(new URL("./worker.js", import.meta.url), {
       type: "module",
     });
+
     const onMessageReceived = (e) => {
       console.log(e, "来自主线程");
       switch (e.data.status) {
@@ -53,12 +55,19 @@ function App() {
         case "ready":
           setReady(true);
           break;
+        case 'complete':
+          setDisabled(false)
+          const blobUrl = URL.createObjectURL(e.data.output)
+          console.log(blobUrl)
+          setOutput(blobUrl)
+          break
       }
     };
     worker.current.onmessage = onMessageReceived;
     return () =>
       worker.current.removeEventListener("message", onMessageReceived);
   }, []);
+
   const handleGenerateSpeech = () => {
     setDisabled(true);
     worker.current.postMessage({

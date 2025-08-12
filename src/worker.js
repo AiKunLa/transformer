@@ -5,6 +5,7 @@ import {
   SpeechT5ForTextToSpeech, // 文本转语音模型 语音的特征
   SpeechT5HifiGan, // 语音合成模型 和音色合成
 } from "@xenova/transformers";
+import {encodeWAV} from "./utils.js"
 // huggingFace 开源的大模型社区
 // 禁用本地大模型，去请求远程的 tts模型
 env.allowLocalModels = false;
@@ -65,12 +66,67 @@ class MyTextToSpeechPipeline {
       resolve(result);
     });
   }
+
+  static async getSpeakerEmbeddings(speaker_id) {
+    const speaker_embeddings_url = `${this.BASE_URL}/${speaker_id}.bin`;
+    // 下载文件.bin  转换数据，将二进制数据转换为float32Array  创建一个张量 构建1*512维度的张量
+    const speaker_embeddings = new Tensor(
+      'float32',
+      new Float32Array(await 
+        (await fetch(speaker_embeddings_url)).arrayBuffer()),
+    [1,512]
+  )
+    console.log(speaker_embeddings)
+  }
+
 }
+
+// 音色缓存
+// 使用es6新增的Map 数据结构，来缓存音色
+const speaker_embedding_cache = new Map();
+
+
 self.onmessage = async (e) => {
   // console.log(e)
   // ai pipeline 派发一个nlp任务
   // 懒加载 llm 初始化和加载放到第一次任务调用之时
-  const [] = await MyTextToSpeechPipeline.getInstance((x) => {
-    self.postMessage(x);
-  });
+
+  // console.log(e)
+  // return
+  
+  const [tokenizer, model, vocoder] = await MyTextToSpeechPipeline.getInstance(
+    (x) => {
+      self.postMessage(x);
+    }
+  );
+
+  // token 是LLM的输入
+  // 将原始的输入，分词为一个一个的word字，让后将其转为数字编码
+  // 向量相似度， 大模通过使用维度来表示万事万物
+  //
+  // prompt -> token -> LLM （函数、向量）-》 outputs
+  const { input_ids } = tokenizer(e.data.text);
+
+  // 选择音色
+  let speaker_embeddings = speaker_embedding_cache.get(e.data.speaker_id);
+  if(!speaker_embeddings){
+    // 若没有这个音色则 下载获取该音色的特征向量
+    speaker_embeddings = await MyTextToSpeechPipeline.getSpeakerEmbeddings(e.data.speaker_id)
+    // 存储
+    speaker_embedding_cache.set(e.data.speaker_id, speaker_embeddings)
+  }
+  const {waveForm} = await model.generate_speech(
+    input_ids, // 分词数字
+    speaker_embeddings, // 512 维度的音频向量
+    vocoder, // 合成器
+  )
+  // 生成的结果 是一对数字维度
+  console.log(waveForm)
+  const wav = encodeWAV(waveForm);
+  console.log(wav,'?????')
+  self.postMessage({
+    statue:'complete',
+    output: new Blob([wav], { type: "audio/wav" })
+  })
+
 };
